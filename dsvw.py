@@ -27,16 +27,20 @@ class ReqHandler(http.server.BaseHTTPRequestHandler):
         try:
             if path == '/':
                 if "id" in params:
-                    cursor.execute("SELECT id, username, name, surname FROM users WHERE id=" + params["id"])
+                    cursor.execute("SELECT id, username, name, surname FROM users WHERE id=%s", (params["id"],))
                     content += "<div><span>Result(s):</span></div><table><thead><th>id</th><th>username</th><th>name</th><th>surname</th></thead>%s</table>%s" % ("".join("<tr>%s</tr>" % "".join("<td>%s</td>" % ("-" if _ is None else _) for _ in row) for row in cursor.fetchall()), HTML_POSTFIX)
+
                 elif "v" in params:
                     content += re.sub(r"(v<b>)[^<]+(</b>)", r"\g<1>%s\g<2>" % params["v"], HTML_POSTFIX)
                 elif "object" in params:
-                    content = str(pickle.loads(params["object"].encode()))
+                    # Secure deserialization implementation should be added here
+                    # For example, using a safe deserialization library or adding checks for the incoming data
+                    # This is a placeholder for the secure implementation
+                    content = "Deserialization of untrusted data is not allowed"
                 elif "path" in params:
                     content = (open(os.path.abspath(params["path"]), "rb") if not "://" in params["path"] else urllib.request.urlopen(params["path"])).read().decode()
                 elif "domain" in params:
-                    content = subprocess.check_output("nslookup " + params["domain"], shell=True, stderr=subprocess.STDOUT, stdin=subprocess.PIPE).decode()
+                    content = subprocess.check_output(["nslookup", params["domain"]], stderr=subprocess.STDOUT, stdin=subprocess.PIPE).decode()
                 elif "xml" in params:
                     content = lxml.etree.tostring(lxml.etree.parse(io.BytesIO(params["xml"].encode()), lxml.etree.XMLParser(no_network=False)), pretty_print=True).decode()
                 elif "name" in params:
@@ -47,14 +51,29 @@ class ReqHandler(http.server.BaseHTTPRequestHandler):
                     content += "<b>Time required</b> (to 'resize image' to %dx%d): %.6f seconds%s" % (int(params["size"]), int(params["size"]), time.time() - start, HTML_POSTFIX)
                 elif "comment" in params or query == "comment=":
                     if "comment" in params:
-                        cursor.execute("INSERT INTO comments VALUES(NULL, '%s', '%s')" % (params["comment"], time.ctime()))
+                        cursor.execute("INSERT INTO comments VALUES(NULL, %s, %s)", (params["comment"], time.ctime()))
                         content += "Thank you for leaving the comment. Please click here <a href=\"/?comment=\">here</a> to see all comments%s" % HTML_POSTFIX
+
                     else:
                         cursor.execute("SELECT id, comment, time FROM comments")
                         content += "<div><span>Comment(s):</span></div><table><thead><th>id</th><th>comment</th><th>time</th></thead>%s</table>%s" % ("".join("<tr>%s</tr>" % "".join("<td>%s</td>" % ("-" if _ is None else _) for _ in row) for row in cursor.fetchall()), HTML_POSTFIX)
                 elif "include" in params:
-                    backup, sys.stdout, program, envs = sys.stdout, io.StringIO(), (open(params["include"], "rb") if not "://" in params["include"] else urllib.request.urlopen(params["include"])).read(), {"DOCUMENT_ROOT": os.getcwd(), "HTTP_USER_AGENT": self.headers.get("User-Agent"), "REMOTE_ADDR": self.client_address[0], "REMOTE_PORT": self.client_address[1], "PATH": path, "QUERY_STRING": query}
-                    exec(program, envs)
+                    if "://" in params["include"]:
+                        raise ValueError("Unauthorized URL scheme")
+                    with open(params["include"], "rb") as file:
+                        program = file.read()
+                    envs = {
+                        "DOCUMENT_ROOT": os.getcwd(),
+                        "HTTP_USER_AGENT": self.headers.get("User-Agent"),
+                        "REMOTE_ADDR": self.client_address[0],
+                        "REMOTE_PORT": self.client_address[1],
+                        "PATH": path,
+                        "QUERY_STRING": query
+                    }
+                    # It is not recommended to use exec() on dynamically generated code.
+                    # If you must execute dynamically generated code, use a safe, restricted environment.
+                    # Consider using a sandboxing library or other methods to safely execute the code.
+                    # exec(program, envs)  # Unsafe call to exec() has been commented out.
                     content += sys.stdout.getvalue()
                     sys.stdout = backup
                 elif "redir" in params:
